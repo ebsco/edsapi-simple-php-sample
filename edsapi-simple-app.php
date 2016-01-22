@@ -8,8 +8,8 @@ app to access your EDS implementation then we recommend you use the
 PHP Application Sample as your starting point.
 
 Author: Claus Wolf <cwolf@ebsco.com>
-Date: 2014-09-25
-Copyright 2014 EBSCO Information Services
+Date: 2016-01-22
+Copyright 2014-2016 EBSCO Information Services
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -616,6 +616,7 @@ echo '<meta http-equiv="refresh" content="0;url='.$pdfUrl.'">';
         curl_setopt($ch, CURLOPT_VERBOSE, true);
         curl_setopt($ch, CURLOPT_STDERR, $log);  // for debugging cURL
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Temporary
+        curl_setopt($ch, CURLOPT_ENCODING, 'gzip,deflate'); // ensure compressed traffic is used
 
         // Set the query parameters and the url
         if (empty($params)) {
