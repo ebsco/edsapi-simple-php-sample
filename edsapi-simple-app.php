@@ -81,7 +81,7 @@ class Functions
 
     //define, which related content feature you would like
     // rs = ResearchStarter; emp = Exact Match Plcard; comma separated value to request multiple (e.g. rs,emp)
-    private static $relatedContent = "rs";
+    private static $relatedContent = "rs,emp";
 
     public function isGuest(){
         $guest = self::$guest;
@@ -267,6 +267,7 @@ BODY;
        $limit = isset($_REQUEST['limit'])?$_REQUEST['limit']:20;
        $sortBy = isset($_REQUEST['sortBy'])?$_REQUEST['sortBy']:'relevance';
        $amount = isset($_REQUEST['amount'])?$_REQUEST['amount']:'detailed';
+       $publicationid = isset($_REQUEST['pubtypeid'])?$_REQUEST['pubtypeid']:''; // provide support for EMP Publication Search
        $mode = 'all';
 
        $query = array();
@@ -311,7 +312,8 @@ BODY;
             'resultsperpage' => $limit,
             'pagenumber'     => $start,
             'highlight'      => 'y',
-            'relatedcontent' => self::$relatedContent // request related content
+            'relatedcontent' => self::$relatedContent, // request related content
+            'publicationid'  => $publicationid
         );
 
         $params = array_merge($params, $query);
@@ -387,12 +389,14 @@ BODY;
         if ($hits > 0) {
             $records = $this->buildRecords($response);
             $relatedContent = $this->getRelatedContent($response);
+            $relatedPublication = $this->getRelatedPublication($response);
         }
 
         $results = array(
             'recordCount' => $hits,
             'records'     => $records,
-            'relatedContent' => $relatedContent
+            'relatedContent' => $relatedContent,
+            'relatedPublication' => $relatedPublication
         );
 
         return $results;
@@ -440,6 +444,43 @@ BODY;
               $results[] = $result;
               }
             return $results;
+          }
+          else {
+            return FALSE;
+          }
+        }
+
+        // This function uses the Search XML response to create an array of related content entries
+        private function getRelatedPublication($response){
+          $results = array();
+
+          if(isset($response->SearchResult->RelatedContent->RelatedPublications)){
+              foreach($response->SearchResult->RelatedContent->RelatedPublications->children('http://epnet.com/webservices/EbscoApi/Publication/Contracts')->RelatedPublication as $publication){
+                $result = array();
+                $result['Type'] = (string)$publication->Type;
+                $result['Label'] = (string)$publication->Label;
+                foreach($publication->PublicationRecords->Record as $pubRec){
+                  $tmpRecord = array();
+                  $tmpRecord['PublicationId'] = (string)$pubRec->Header->PublicationId;
+                  $tmpRecord['IsSearchable'] = (string)$pubRec->Header->IsSearchable;
+                  $tmpRecord['PLink'] = (string)$pubRec->PLink;
+                  foreach($pubRec->Items->Item as $item){
+                    if($item->Label == 'Title'){
+                      $tmpRecord['Title'] = (string)$item->Data;
+                    }
+                    elseif($item->Label == 'ISSN'){
+                      $tmpRecord['ISSN'] = (string)$item->Data;
+                    }
+                  }
+                  foreach ($pubRec->FullTextHoldings->FullTextHolding as $ft) {
+                    $tmpFTH['URL'] = (string)$ft->URL;
+                    $tmpFTH['Name'] = (string)$ft->Name;
+                    $tmpRecord['FullText'][] = $tmpFTH;
+                  }
+                }
+                $result['Record'][] = $tmpRecord;
+              }
+            return $result;
           }
           else {
             return FALSE;
@@ -928,6 +969,10 @@ Begin displaying the user interface
 			root {
 				display: block;
 			}
+      body, table {
+        font-family: helvetica, arial, tahoma, verdana, sans-serif;
+        font-size: 12px;
+      }
 			.header{
 			   border: 2px solid #cccccc;
 			}
@@ -957,24 +1002,30 @@ Begin displaying the user interface
 				border: 2px solid lightgray;
 				width: 1402px;
 			}
+      .pubtype{
+        width: 75px;
+      }
 			 .title {
-				margin-bottom: 10px;
+        font-size: 1.25em;
 			}
+      .source{
+        margin-left: 3px;
+      }
 			.abstract {
 				font-style: italic;
-				margin-bottom: 10px;
+				margin-bottom: 0.5em;
 			}
 			.authors {
-				margin-bottom: 10px;
+				margin-bottom: 0.5em;
 			}
 			.subjects {
-				margin-bottom: 10px;
+				margin-bottom: 0.5em;
 			}
 			.links {
-				margin-bottom: 10px;
+				margin-bottom: 0.5em;
 			}
 			.custom-links {
-				margin-bottom: 50px;
+				margin-bottom: 1em;
 			}
 			.result:nth-child(2n) {
 				background-color: #EEEEEE;
@@ -1032,7 +1083,7 @@ Begin displaying the user interface
 			}
 			.span-15 {
 				width: 590px;
-				 float: left;
+				float: left;
 				margin-right: 10px;
 			}
 			.jacket {
@@ -1084,7 +1135,7 @@ Begin displaying the user interface
 .pt-play{ background-position: -245px -620px; height: 50px; }
                 </style>
 <style>
-.related-content {
+.related-content, .emp_placard {
   width: 80%;
   padding: 10px;
   margin-left: auto;
@@ -1093,16 +1144,42 @@ Begin displaying the user interface
 .bluebg{
   background-color: rgba(228,246,248,0.5);
 }
+.yellowbg{
+  background-color: rgba(255,232,102,0.5);
+}
 .rs_image {
   max-width: 100px;
   margin-right: 20px;
 }
-.related-content-title{
+.related-content-title, .emp_label{
     font-size: 1.15em;
     font-weight: bold;
     margin-bottom: 0.25em;
 }
+.emp_title, .emp_ft_target, .emp_sb{
+  margin-left: 1.5em;
+}
+.emp_title{
+  font-weight: bold;
+  font-size: 1.25em;
+}
 </style>
+<script>
+ function showEMP(){
+   document.getElementById("emp_placard").style.display = "block";
+   document.getElementById("related-content").style.display = "none";
+ }
+ function showEmpFtList(){
+   document.getElementById("emp_hide_ft_list").style.display = "block";
+   document.getElementById("emp_ft_list").style.display = "block";
+   document.getElementById("emp_show_ft_list").style.display = "none";
+ }
+ function hideEmpFtList(){
+   document.getElementById("emp_hide_ft_list").style.display = "none";
+   document.getElementById("emp_ft_list").style.display = "none";
+   document.getElementById("emp_show_ft_list").style.display = "block";
+ }
+</script>
 	</head>
 <body>
 
@@ -1181,10 +1258,11 @@ Begin displaying the user interface
 
 <!-- Related Content -->
 <?php
+$hideempplacard = '';
 if(!empty($results) && $results['relatedContent'] != FALSE) {
 ?>
 
-  <div class="related-content bluebg">
+  <div class="related-content bluebg" id="related-content">
     <?php
 
       foreach($results['relatedContent'] as $relCont) {
@@ -1263,6 +1341,12 @@ if(!empty($results) && $results['relatedContent'] != FALSE) {
       ?>
       </p>
      </div>
+     <?php
+      if($results['relatedPublication'] != FALSE){
+        echo '<div id="showEMP"><a href="javascript:showEMP();">We also found an exact Publication Match, click here to see it!</a></div>';
+        $hideempplacard = 'style="display:none"';
+      }
+    ?>
     <div style="clear:both"></div>
   <?php } ?>
   </div>
@@ -1270,6 +1354,44 @@ if(!empty($results) && $results['relatedContent'] != FALSE) {
 <?php
 } // end reseach starters
 ?>
+
+<!-- Start Exact Match Placard -->
+<?php
+if(!empty($results) && $results['relatedPublication'] != FALSE) {
+
+  echo '<div id="emp_placard" class="emp_placard yellowbg" '.$hideempplacard.'>';
+  echo '<div class="emp_label">'.$results['relatedPublication']['Label'].'</div>';
+  foreach($results['relatedPublication']['Record'] as $rec){
+    echo '<div class="emp_title"><a href="'.$rec['PLink'].'" target="_blank">'.$rec['Title'].'</a></div>';
+
+    if($rec['IsSearchable'] == 'y'){
+          echo '<div class="emp_sb">';
+          echo '<form action="'.$path.'" method="get">';
+          echo '<input type="hidden" name="search" value="y">';
+          echo '<input type="hidden" name="type" value="keyword">';
+          echo '<input type="hidden" name="pubtypeid" value="'.$rec['PublicationId'].'">';
+          echo '<input type="text" name="lookfor" size="40" placeholder="Search Inside this Journal">';
+          echo '<button type="submit">Go</button>';
+          echo '</form>';
+          echo '</div>';
+    }
+
+    if(count($rec['FullText']) > 0){
+      echo '<div class="emp_ft_target">';
+      echo '<div id="emp_show_ft_list"><a href="javascript:showEmpFtList();">[+]Show Full Text Access Options</a></div>';
+      echo '<div id="emp_hide_ft_list" style="display:none"><a href="javascript:hideEmpFtList();">[-]Hide Full Text Access Options</a></div>';
+      echo '<ul id="emp_ft_list" style="display:none">';
+      foreach($rec['FullText'] as $fullTxt){
+        echo '<li><a href="'.$fullTxt['URL'].'" target="_blank">'.$fullTxt['Name'].'</a></li>';
+      }
+      echo '</ul>';
+      echo '</div>';
+    }
+  }
+  echo '</div>';
+}
+?>
+<!-- End Exact Match Placard -->
 
   <!-- Display all results -->
           <div class="results table">
@@ -1351,7 +1473,7 @@ if(!empty($results) && $results['relatedContent'] != FALSE) {
                             <span>
                                <table>
                                     <tr>
-                                        <td style="vertical-align: top; width: 25px">By : </td><td>
+                                        <td style="width: 2em;padding-top:3px">By: </td><td>
                                             <table><tr><td>
                                     <?php foreach($result['Items']['Au'] as $Author){ ?>
                                         <?php echo $Author['Data']; ?>;
@@ -1389,7 +1511,7 @@ if(!empty($results) && $results['relatedContent'] != FALSE) {
 <!-- Abstract -->       <div class="abstract">
                             <table>
                                 <tr>
-                                    <td style="vertical-align: top;">Abstract: </td>
+                                    <td style="vertical-align:top;padding-top:3px">Abstract: </td>
                                     <td>
                                         <table>
                                              <?php foreach($result['Items']['Ab'] as $Abstract){ ?>
@@ -1410,7 +1532,7 @@ if(!empty($results) && $results['relatedContent'] != FALSE) {
 <!-- Subject  -->       <div class="subjects">
                             <table>
                                 <tr>
-                                    <td style="vertical-align: top;">Subjects:</td>
+                                    <td style="vertical-align:top;padding-top: 5px">Subjects:</td>
                                     <td>
                                         <table>
                                             <tr><td>
@@ -1657,5 +1779,6 @@ if (isset($result['error'])) {
          </div>
 </div>
  <?php } ?>
+
     </body>
 </html>
