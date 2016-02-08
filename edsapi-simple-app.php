@@ -79,6 +79,10 @@ class Functions
     private static $orgID = "";
     private static $guest ="y";
 
+    //define, which related content feature you would like
+    // rs = ResearchStarter; emp = Exact Match Plcard; comma separated value to request multiple (e.g. rs,emp)
+    private static $relatedContent = "rs";
+
     public function isGuest(){
         $guest = self::$guest;
         return $guest;
@@ -199,7 +203,7 @@ BODY;
         }else{
             $sessionToken = $this->requestSessionToken($authenToken);
             $_SESSION['sessionToken']=$sessionToken;
-            setcookie("Guest", 'Coolie' , 0);
+            setcookie("Guest", 'Cookie' , 0);
             $token = $sessionToken;
         }
         return $token;
@@ -306,7 +310,8 @@ BODY;
             'includefacets'  => 'n',
             'resultsperpage' => $limit,
             'pagenumber'     => $start,
-            'highlight'      => 'y'
+            'highlight'      => 'y',
+            'relatedcontent' => self::$relatedContent // request related content
         );
 
         $params = array_merge($params, $query);
@@ -356,6 +361,7 @@ BODY;
                 return $result;
             }
         }
+
         $response = $this->buildSearch($response);
 
         //Cach search response for further use
@@ -380,15 +386,65 @@ BODY;
         $records = array();
         if ($hits > 0) {
             $records = $this->buildRecords($response);
+            $relatedContent = $this->getRelatedContent($response);
         }
 
         $results = array(
             'recordCount' => $hits,
-            'records'     => $records
+            'records'     => $records,
+            'relatedContent' => $relatedContent
         );
 
         return $results;
     }
+
+    // This function uses the Search XML response to create an array of related content entries
+        private function getRelatedContent($response){
+          $results = array();
+
+            if(isset($response->SearchResult->RelatedContent->RelatedRecords->RelatedRecord)){
+              $relatedRecords = $response->SearchResult->RelatedContent->RelatedRecords->RelatedRecord;
+              foreach($relatedRecords as $relatedRecord) {
+                //var_dump($relatedRecord);
+                $result = array();
+                $result['Type'] = (string)$relatedRecord->Type;
+                $result['Label'] = (string)$relatedRecord->Label;
+                $result['Record'] = array();
+                foreach($relatedRecord->Records->Record as $rRecord) {
+                  $tmpRecord = array();
+                  $tmpRecord['DbId'] = (string)$rRecord->Header->DbId;
+                  $tmpRecord['An'] = (string)$rRecord->Header->An;
+                  $tmpRecord['PLink'] = (string)$rRecord->PLink;
+                  if(isset($rRecord->ImageInfo->CoverArt->Target)){
+                    $tmpRecord['Thumbnail'] = (string)$rRecord->ImageInfo->CoverArt->Target;
+                  }
+                  else {
+                    $tmpRecord['Thumbnail'] = '';
+                  }
+                  foreach($rRecord->Items->Item as $item) {
+                      if($item->Label == 'Title') {
+                        $tmpRecord['Title'] = (string)$item->Data;
+                      }
+                      elseif($item->Label == 'Authors') {
+                        $tmpRecord['Authors'] = (string)$item->Data;
+                      }
+                      elseif($item->Label == 'Source') {
+                        $tmpRecord['Source'] = (string)$item->Data;
+                      }
+                      elseif($item->Label == 'Abstract'){
+                        $tmpRecord['Abstract'] = (string)$item->Data;
+                      }
+                  }
+                  $result['Record'][] = $tmpRecord;
+                }
+              $results[] = $result;
+              }
+            return $results;
+          }
+          else {
+            return FALSE;
+          }
+        }
 
     // This function uses the Search XML response to create an array of the records in the results page
     private function buildRecords($response)
@@ -1027,6 +1083,26 @@ Begin displaying the user interface
 .pt-ShortStory { background-position: -141px -620px; height: 55px; }
 .pt-play{ background-position: -245px -620px; height: 50px; }
                 </style>
+<style>
+.related-content {
+  width: 80%;
+  padding: 10px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.bluebg{
+  background-color: rgba(228,246,248,0.5);
+}
+.rs_image {
+  max-width: 100px;
+  margin-right: 20px;
+}
+.related-content-title{
+    font-size: 1.15em;
+    font-weight: bold;
+    margin-bottom: 0.25em;
+}
+</style>
 	</head>
 <body>
 
@@ -1093,7 +1169,7 @@ Begin displaying the user interface
                  </div>
               <?php } ?>
 
-              <?php if (!empty($results)) { ?>
+        <?php if (!empty($results)) { ?>
 
  <!--Display a summary of Totle hits, Search query and Number of records on the page -->
                  <div class="statistics">
@@ -1101,7 +1177,99 @@ Begin displaying the user interface
                  of <strong><?php echo $results['recordCount']; ?></strong>
                  for "<strong><?php echo $lookfor; ?></strong>"
                  </div><hr>
-              <?php } ?>
+        <?php } ?>
+
+<!-- Related Content -->
+<?php
+if(!empty($results) && $results['relatedContent'] != FALSE) {
+?>
+
+  <div class="related-content bluebg">
+    <?php
+
+      foreach($results['relatedContent'] as $relCont) {
+        //var_dump($relCont);
+        $params = array(
+            'lookfor'=>$lookfor,
+            'type'=>$_REQUEST['type'],
+            'record'=>'y',
+            'db'=>$relCont['Record'][0]['DbId'],
+            'an'=>$relCont['Record'][0]['An']
+        );
+        $params = http_build_query($params);
+    ?>
+
+    <div class="related-content-title">
+      <?php echo $relCont['Label'].': ';
+        echo '<a href="'.$path.'?'.$params.'" title="click here for full content">';
+        if(isset($relCont['Record'][0]['Title']) && !empty($relCont['Record'][0]['Title'])){
+          echo $relCont['Record'][0]['Title'];
+        }
+        else {
+          echo 'Title not available to Guests';
+        }
+        echo '</a>';
+      ?>
+    </div>
+    <div id="related-content-img" style="float:left;margin-right: 20px">
+      <?php
+      if(isset($relCont['Record'][0]['Thumbnail']) && !empty($relCont['Record'][0]['Thumbnail'])) {
+        // improve https support by stripping http:// from image source and replacing with //
+        echo '<img src="'.str_replace('http://', '//', $relCont['Record'][0]['Thumbnail']).'" border="0" class="rs_image" />';
+      }
+      else {
+        echo '<img src="//imageserver.ebscohost.com/branding/edsapi-simple-php/logors2.jpg" border="0" class="rs_image" />';
+      }
+      ?>
+    </div>
+    <div id="related-content-data">
+      <p>
+      <?php
+      $relContentAbstr = $relCont['Record'][0]['Abstract'];
+      $cleanHighlight = array('<highlight>', '</highlight>');
+      $relContentAbstract = str_replace($cleanHighlight, '', $relContentAbstr);
+      if(strlen($relContentAbstract) > 275) {
+        echo mb_substr(str_replace('...','',$relContentAbstract),0,275).'&hellip;&nbsp;<a href="'.$path.'?'.$params.'" title="click here for full content">[More]</a><br>';
+      }
+      else {
+        echo $relContentAbstract.'<a href="'.$path.'?'.$params.'" title="click here for full content">[More]</a><br>';
+      }
+            ?>
+      </p>
+      <p>
+      <?php
+        if(count($relCont['Record']) > 1){
+          echo '<div id="moreRelCont" ><em>Additional Topics: </em>';
+            for($i=1;$i<count($relCont['Record']); $i++){
+              $params = array(
+                  'lookfor'=>$lookfor,
+                  'type'=>$_REQUEST['type'],
+                  'record'=>'y',
+                  'db'=>$relCont['Record'][$i]['DbId'],
+                  'an'=>$relCont['Record'][$i]['An']
+              );
+              $params = http_build_query($params);
+              echo '<a href="'.$path.'?'.$params.'" title="'.$relCont['Record'][$i]['Abstract'].'">';
+              if(isset($relCont['Record'][$i]['Title']) && !empty($relCont['Record'][$i]['Title'])){
+                echo $relCont['Record'][$i]['Title'];
+              }
+              else {
+                echo 'Title not available to Guests';
+              }
+              echo '</a>; ';
+            }
+          echo '</div>';
+        } // end more related content loop
+      ?>
+      </p>
+     </div>
+    <div style="clear:both"></div>
+  <?php } ?>
+  </div>
+
+<?php
+} // end reseach starters
+?>
 
   <!-- Display all results -->
           <div class="results table">
@@ -1475,9 +1643,14 @@ if (isset($result['error'])) {
          <?php } ?>
          </div>
              <div class="jacket">
-                <?php if(!empty($result['ImageInfo'])) { ?>
-                 <img width="150px" height="200px" src="<?php echo $result['ImageInfo']['medium']; ?>" />
-        <?php } ?>
+                <?php if(!empty($result['ImageInfo'])) {
+                  if(isset($result['ImageInfo']['medium']) && !empty($result['ImageInfo']['medium'])){
+                    echo '<img width="150px" height="200px" src="'.$result['ImageInfo']['medium'].'" />';
+                  }
+                  elseif(isset($result['ImageInfo']['thumb']) && !empty($result['ImageInfo']['thumb'])){
+                    echo '<img src="'.$result['ImageInfo']['thumb'].'" />';
+                  }
+                } ?>
              </div>
         </div>
 
