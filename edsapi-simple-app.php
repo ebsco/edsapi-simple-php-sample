@@ -8,7 +8,7 @@ app to access your EDS implementation then we recommend you use the
 PHP Application Sample as your starting point.
 
 Author: Claus Wolf <cwolf@ebsco.com>
-Date: 2016-01-22
+Date: 2016-02-08
 Copyright 2014-2016 EBSCO Information Services
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -281,6 +281,11 @@ BODY;
             $tag = $this->fieldCodeSelect($type);
             if($tag!=null){
             $query_str = implode(":", array($tag, $term));
+              // if user elects to run an Author Search, improve relevancy by setting search mode to Boolean/Phrase
+              if(strtoupper($tag) === 'AU'){
+                $mode = 'bool';
+              }
+
             }else{
             $query_str = $term;
             }
