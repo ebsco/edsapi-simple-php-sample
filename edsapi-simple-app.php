@@ -8,7 +8,7 @@ app to access your EDS implementation then we recommend you use the
 PHP Application Sample as your starting point.
 
 Author: Claus Wolf <cwolf@ebsco.com>
-Date: 2016-02-08
+Date: 2016-02-11
 Copyright 2014-2016 EBSCO Information Services
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -82,6 +82,9 @@ class Functions
     //define, which related content feature you would like
     // rs = ResearchStarter; emp = Exact Match Plcard; comma separated value to request multiple (e.g. rs,emp)
     private static $relatedContent = "rs,emp";
+
+    //define, whether you would like EBSCO Discovery Service to suggest spelling corrections
+    private static $autoSuggest = "y"; // options y / n
 
     public function isGuest(){
         $guest = self::$guest;
@@ -313,6 +316,7 @@ BODY;
             'pagenumber'     => $start,
             'highlight'      => 'y',
             'relatedcontent' => self::$relatedContent, // request related content
+            'autosuggest'    => self::$autoSuggest, // request spelling corrections
             'publicationid'  => $publicationid
         );
 
@@ -390,17 +394,31 @@ BODY;
             $records = $this->buildRecords($response);
             $relatedContent = $this->getRelatedContent($response);
             $relatedPublication = $this->getRelatedPublication($response);
+            $autoSuggest = $this->getAutoSuggest($response);
         }
 
         $results = array(
             'recordCount' => $hits,
             'records'     => $records,
             'relatedContent' => $relatedContent,
-            'relatedPublication' => $relatedPublication
+            'relatedPublication' => $relatedPublication,
+            'autoSuggest' => $autoSuggest
         );
 
         return $results;
     }
+
+    //this function uses the Search XML response to get an array of spelling suggestions
+
+      private function getAutoSuggest($response){
+        $suggestedTerms = Array();
+        if (self::$autoSuggest == 'y' && isset($response->SearchResult->AutoSuggestedTerms)){
+          foreach($response->SearchResult->AutoSuggestedTerms->AutoSuggestedTerm as $spellSuggestion){
+            $suggestedTerms[] = $spellSuggestion;
+          }
+        }
+        return $suggestedTerms;
+      }
 
     // This function uses the Search XML response to create an array of related content entries
         private function getRelatedContent($response){
@@ -1239,6 +1257,28 @@ Begin displaying the user interface
 
  <!-- Display Result List -->
        <div id="results-container" class="resultsList-container">
+
+         <!-- if requested and present show Spelling Suggestion -->
+         <?php
+         if(isset($results['autoSuggest']) && count($results['autoSuggest']) > 0) {
+           $as = 1;
+           echo '<div id="autoSuggestedTerms" style="margin-left: 15px;margin-top: 10px">';
+           echo 'Did you mean: ';
+           foreach($results['autoSuggest'] as $suggestion) {
+             $query = $_REQUEST;
+             $query['lookfor'] = (string)$suggestion;
+             $newQuery = http_build_query($query);
+             echo '<a href="?'.$newQuery.'">'.$suggestion.'</a>';
+             if(count($results['autoSuggest'] > 1) && $as < count($results['autoSuggest'])){
+               echo '; ';
+             }
+             $as++;
+           }
+           echo '</div>';
+         }
+         ?>
+         <!-- end spelling suggestion-->
+
               <h2 style="margin-left: 15px;">Results</h2>
               <?php if ($error) { ?>
                  <div class="error">
