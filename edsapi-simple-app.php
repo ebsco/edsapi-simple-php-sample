@@ -1112,7 +1112,7 @@ Begin displaying the user interface
 			}
 		</style>
                 <style>
-.pt-icon { width: 70px; float: left; display: inline-block; background-image: url('http://imageserver.ebscohost.com/branding/demos/edsapi/PT_Sprite.png'); background-repeat: no-repeat; }
+.pt-icon { width: 70px; float: left; display: inline-block; background-image: url('PT_Sprite.png'); background-repeat: no-repeat; }
 .pt-serialPeriodical { background-position: -30px -30px; height: 59px; }
 .pt-newspaperArticle { background-position: -140px -30px; height: 51px; }
 .pt-image { background-position: -245px -30px; height: 47px; }
