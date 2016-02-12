@@ -8,7 +8,7 @@ app to access your EDS implementation then we recommend you use the
 PHP Application Sample as your starting point.
 
 Author: Claus Wolf <cwolf@ebsco.com>
-Date: 2016-01-22
+Date: 2016-02-11
 Copyright 2014-2016 EBSCO Information Services
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -78,6 +78,13 @@ class Functions
     private static $profile = "";
     private static $orgID = "";
     private static $guest ="y";
+
+    //define, which related content feature you would like
+    // rs = ResearchStarter; emp = Exact Match Plcard; comma separated value to request multiple (e.g. rs,emp)
+    private static $relatedContent = "rs,emp";
+
+    //define, whether you would like EBSCO Discovery Service to suggest spelling corrections
+    private static $autoSuggest = "y"; // options y / n
 
     public function isGuest(){
         $guest = self::$guest;
@@ -199,7 +206,7 @@ BODY;
         }else{
             $sessionToken = $this->requestSessionToken($authenToken);
             $_SESSION['sessionToken']=$sessionToken;
-            setcookie("Guest", 'Coolie' , 0);
+            setcookie("Guest", 'Cookie' , 0);
             $token = $sessionToken;
         }
         return $token;
@@ -263,6 +270,7 @@ BODY;
        $limit = isset($_REQUEST['limit'])?$_REQUEST['limit']:20;
        $sortBy = isset($_REQUEST['sortBy'])?$_REQUEST['sortBy']:'relevance';
        $amount = isset($_REQUEST['amount'])?$_REQUEST['amount']:'detailed';
+       $publicationid = isset($_REQUEST['pubtypeid'])?$_REQUEST['pubtypeid']:''; // provide support for EMP Publication Search
        $mode = 'all';
 
        $query = array();
@@ -281,6 +289,11 @@ BODY;
             $tag = $this->fieldCodeSelect($type);
             if($tag!=null){
             $query_str = implode(":", array($tag, $term));
+              // if user elects to run an Author Search, improve relevancy by setting search mode to Boolean/Phrase
+              if(strtoupper($tag) === 'AU'){
+                $mode = 'bool';
+              }
+
             }else{
             $query_str = $term;
             }
@@ -301,7 +314,10 @@ BODY;
             'includefacets'  => 'n',
             'resultsperpage' => $limit,
             'pagenumber'     => $start,
-            'highlight'      => 'y'
+            'highlight'      => 'y',
+            'relatedcontent' => self::$relatedContent, // request related content
+            'autosuggest'    => self::$autoSuggest, // request spelling corrections
+            'publicationid'  => $publicationid
         );
 
         $params = array_merge($params, $query);
@@ -351,6 +367,7 @@ BODY;
                 return $result;
             }
         }
+
         $response = $this->buildSearch($response);
 
         //Cach search response for further use
@@ -375,15 +392,118 @@ BODY;
         $records = array();
         if ($hits > 0) {
             $records = $this->buildRecords($response);
+            $relatedContent = $this->getRelatedContent($response);
+            $relatedPublication = $this->getRelatedPublication($response);
+            $autoSuggest = $this->getAutoSuggest($response);
         }
 
         $results = array(
             'recordCount' => $hits,
-            'records'     => $records
+            'records'     => $records,
+            'relatedContent' => $relatedContent,
+            'relatedPublication' => $relatedPublication,
+            'autoSuggest' => $autoSuggest
         );
 
         return $results;
     }
+
+    //this function uses the Search XML response to get an array of spelling suggestions
+
+      private function getAutoSuggest($response){
+        $suggestedTerms = Array();
+        if (self::$autoSuggest == 'y' && isset($response->SearchResult->AutoSuggestedTerms)){
+          foreach($response->SearchResult->AutoSuggestedTerms->AutoSuggestedTerm as $spellSuggestion){
+            $suggestedTerms[] = $spellSuggestion;
+          }
+        }
+        return $suggestedTerms;
+      }
+
+    // This function uses the Search XML response to create an array of related content entries
+        private function getRelatedContent($response){
+          $results = array();
+
+            if(isset($response->SearchResult->RelatedContent->RelatedRecords->RelatedRecord)){
+              $relatedRecords = $response->SearchResult->RelatedContent->RelatedRecords->RelatedRecord;
+              foreach($relatedRecords as $relatedRecord) {
+                //var_dump($relatedRecord);
+                $result = array();
+                $result['Type'] = (string)$relatedRecord->Type;
+                $result['Label'] = (string)$relatedRecord->Label;
+                $result['Record'] = array();
+                foreach($relatedRecord->Records->Record as $rRecord) {
+                  $tmpRecord = array();
+                  $tmpRecord['DbId'] = (string)$rRecord->Header->DbId;
+                  $tmpRecord['An'] = (string)$rRecord->Header->An;
+                  $tmpRecord['PLink'] = (string)$rRecord->PLink;
+                  if(isset($rRecord->ImageInfo->CoverArt->Target)){
+                    $tmpRecord['Thumbnail'] = (string)$rRecord->ImageInfo->CoverArt->Target;
+                  }
+                  else {
+                    $tmpRecord['Thumbnail'] = '';
+                  }
+                  foreach($rRecord->Items->Item as $item) {
+                      if($item->Label == 'Title') {
+                        $tmpRecord['Title'] = (string)$item->Data;
+                      }
+                      elseif($item->Label == 'Authors') {
+                        $tmpRecord['Authors'] = (string)$item->Data;
+                      }
+                      elseif($item->Label == 'Source') {
+                        $tmpRecord['Source'] = (string)$item->Data;
+                      }
+                      elseif($item->Label == 'Abstract'){
+                        $tmpRecord['Abstract'] = (string)$item->Data;
+                      }
+                  }
+                  $result['Record'][] = $tmpRecord;
+                }
+              $results[] = $result;
+              }
+            return $results;
+          }
+          else {
+            return FALSE;
+          }
+        }
+
+        // This function uses the Search XML response to create an array of related content entries
+        private function getRelatedPublication($response){
+          $results = array();
+
+          if(isset($response->SearchResult->RelatedContent->RelatedPublications)){
+              foreach($response->SearchResult->RelatedContent->RelatedPublications->children('http://epnet.com/webservices/EbscoApi/Publication/Contracts')->RelatedPublication as $publication){
+                $result = array();
+                $result['Type'] = (string)$publication->Type;
+                $result['Label'] = (string)$publication->Label;
+                foreach($publication->PublicationRecords->Record as $pubRec){
+                  $tmpRecord = array();
+                  $tmpRecord['PublicationId'] = (string)$pubRec->Header->PublicationId;
+                  $tmpRecord['IsSearchable'] = (string)$pubRec->Header->IsSearchable;
+                  $tmpRecord['PLink'] = (string)$pubRec->PLink;
+                  foreach($pubRec->Items->Item as $item){
+                    if($item->Label == 'Title'){
+                      $tmpRecord['Title'] = (string)$item->Data;
+                    }
+                    elseif($item->Label == 'ISSN'){
+                      $tmpRecord['ISSN'] = (string)$item->Data;
+                    }
+                  }
+                  foreach ($pubRec->FullTextHoldings->FullTextHolding as $ft) {
+                    $tmpFTH['URL'] = (string)$ft->URL;
+                    $tmpFTH['Name'] = (string)$ft->Name;
+                    $tmpRecord['FullText'][] = $tmpFTH;
+                  }
+                }
+                $result['Record'][] = $tmpRecord;
+              }
+            return $result;
+          }
+          else {
+            return FALSE;
+          }
+        }
 
     // This function uses the Search XML response to create an array of the records in the results page
     private function buildRecords($response)
@@ -867,6 +987,10 @@ Begin displaying the user interface
 			root {
 				display: block;
 			}
+      body, table {
+        font-family: helvetica, arial, tahoma, verdana, sans-serif;
+        font-size: 12px;
+      }
 			.header{
 			   border: 2px solid #cccccc;
 			}
@@ -896,24 +1020,30 @@ Begin displaying the user interface
 				border: 2px solid lightgray;
 				width: 1402px;
 			}
+      .pubtype{
+        width: 75px;
+      }
 			 .title {
-				margin-bottom: 10px;
+        font-size: 1.25em;
 			}
+      .source{
+        margin-left: 3px;
+      }
 			.abstract {
 				font-style: italic;
-				margin-bottom: 10px;
+				margin-bottom: 0.5em;
 			}
 			.authors {
-				margin-bottom: 10px;
+				margin-bottom: 0.5em;
 			}
 			.subjects {
-				margin-bottom: 10px;
+				margin-bottom: 0.5em;
 			}
 			.links {
-				margin-bottom: 10px;
+				margin-bottom: 0.5em;
 			}
 			.custom-links {
-				margin-bottom: 50px;
+				margin-bottom: 1em;
 			}
 			.result:nth-child(2n) {
 				background-color: #EEEEEE;
@@ -971,7 +1101,7 @@ Begin displaying the user interface
 			}
 			.span-15 {
 				width: 590px;
-				 float: left;
+				float: left;
 				margin-right: 10px;
 			}
 			.jacket {
@@ -982,7 +1112,7 @@ Begin displaying the user interface
 			}
 		</style>
                 <style>
-.pt-icon { width: 70px; float: left; display: inline-block; background-image: url('http://imageserver.ebscohost.com/branding/demos/edsapi/PT_Sprite.png'); background-repeat: no-repeat; }
+.pt-icon { width: 70px; float: left; display: inline-block; background-image: url('PT_Sprite.png'); background-repeat: no-repeat; }
 .pt-serialPeriodical { background-position: -30px -30px; height: 59px; }
 .pt-newspaperArticle { background-position: -140px -30px; height: 51px; }
 .pt-image { background-position: -245px -30px; height: 47px; }
@@ -1022,6 +1152,52 @@ Begin displaying the user interface
 .pt-ShortStory { background-position: -141px -620px; height: 55px; }
 .pt-play{ background-position: -245px -620px; height: 50px; }
                 </style>
+<style>
+.related-content, .emp_placard {
+  width: 80%;
+  padding: 10px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.bluebg{
+  background-color: rgba(228,246,248,0.5);
+}
+.yellowbg{
+  background-color: rgba(255,232,102,0.5);
+}
+.rs_image {
+  max-width: 100px;
+  margin-right: 20px;
+}
+.related-content-title, .emp_label{
+    font-size: 1.15em;
+    font-weight: bold;
+    margin-bottom: 0.25em;
+}
+.emp_title, .emp_ft_target, .emp_sb{
+  margin-left: 1.5em;
+}
+.emp_title{
+  font-weight: bold;
+  font-size: 1.25em;
+}
+</style>
+<script>
+ function showEMP(){
+   document.getElementById("emp_placard").style.display = "block";
+   document.getElementById("related-content").style.display = "none";
+ }
+ function showEmpFtList(){
+   document.getElementById("emp_hide_ft_list").style.display = "block";
+   document.getElementById("emp_ft_list").style.display = "block";
+   document.getElementById("emp_show_ft_list").style.display = "none";
+ }
+ function hideEmpFtList(){
+   document.getElementById("emp_hide_ft_list").style.display = "none";
+   document.getElementById("emp_ft_list").style.display = "none";
+   document.getElementById("emp_show_ft_list").style.display = "block";
+ }
+</script>
 	</head>
 <body>
 
@@ -1081,6 +1257,28 @@ Begin displaying the user interface
 
  <!-- Display Result List -->
        <div id="results-container" class="resultsList-container">
+
+         <!-- if requested and present show Spelling Suggestion -->
+         <?php
+         if(isset($results['autoSuggest']) && count($results['autoSuggest']) > 0) {
+           $as = 1;
+           echo '<div id="autoSuggestedTerms" style="margin-left: 15px;margin-top: 10px">';
+           echo 'Did you mean: ';
+           foreach($results['autoSuggest'] as $suggestion) {
+             $query = $_REQUEST;
+             $query['lookfor'] = (string)$suggestion;
+             $newQuery = http_build_query($query);
+             echo '<a href="?'.$newQuery.'">'.$suggestion.'</a>';
+             if(count($results['autoSuggest'] > 1) && $as < count($results['autoSuggest'])){
+               echo '; ';
+             }
+             $as++;
+           }
+           echo '</div>';
+         }
+         ?>
+         <!-- end spelling suggestion-->
+
               <h2 style="margin-left: 15px;">Results</h2>
               <?php if ($error) { ?>
                  <div class="error">
@@ -1088,7 +1286,7 @@ Begin displaying the user interface
                  </div>
               <?php } ?>
 
-              <?php if (!empty($results)) { ?>
+        <?php if (!empty($results)) { ?>
 
  <!--Display a summary of Totle hits, Search query and Number of records on the page -->
                  <div class="statistics">
@@ -1096,7 +1294,144 @@ Begin displaying the user interface
                  of <strong><?php echo $results['recordCount']; ?></strong>
                  for "<strong><?php echo $lookfor; ?></strong>"
                  </div><hr>
-              <?php } ?>
+        <?php } ?>
+
+<!-- Related Content -->
+<?php
+$hideempplacard = '';
+if(!empty($results) && $results['relatedContent'] != FALSE) {
+?>
+
+  <div class="related-content bluebg" id="related-content">
+    <?php
+
+      foreach($results['relatedContent'] as $relCont) {
+        //var_dump($relCont);
+        $params = array(
+            'lookfor'=>$lookfor,
+            'type'=>$_REQUEST['type'],
+            'record'=>'y',
+            'db'=>$relCont['Record'][0]['DbId'],
+            'an'=>$relCont['Record'][0]['An']
+        );
+        $params = http_build_query($params);
+    ?>
+
+    <div class="related-content-title">
+      <?php echo $relCont['Label'].': ';
+        echo '<a href="'.$path.'?'.$params.'" title="click here for full content">';
+        if(isset($relCont['Record'][0]['Title']) && !empty($relCont['Record'][0]['Title'])){
+          echo $relCont['Record'][0]['Title'];
+        }
+        else {
+          echo 'Title not available to Guests';
+        }
+        echo '</a>';
+      ?>
+    </div>
+    <div id="related-content-img" style="float:left;margin-right: 20px">
+      <?php
+      if(isset($relCont['Record'][0]['Thumbnail']) && !empty($relCont['Record'][0]['Thumbnail'])) {
+        // improve https support by stripping http:// from image source and replacing with //
+        echo '<img src="'.str_replace('http://', '//', $relCont['Record'][0]['Thumbnail']).'" border="0" class="rs_image" />';
+      }
+      else {
+        echo '<img src="//imageserver.ebscohost.com/branding/edsapi-simple-php/logors2.jpg" border="0" class="rs_image" />';
+      }
+      ?>
+    </div>
+    <div id="related-content-data">
+      <p>
+      <?php
+      $relContentAbstr = $relCont['Record'][0]['Abstract'];
+      $cleanHighlight = array('<highlight>', '</highlight>');
+      $relContentAbstract = str_replace($cleanHighlight, '', $relContentAbstr);
+      if(strlen($relContentAbstract) > 275) {
+        echo mb_substr(str_replace('...','',$relContentAbstract),0,275).'&hellip;&nbsp;<a href="'.$path.'?'.$params.'" title="click here for full content">[More]</a><br>';
+      }
+      else {
+        echo $relContentAbstract.'<a href="'.$path.'?'.$params.'" title="click here for full content">[More]</a><br>';
+      }
+            ?>
+      </p>
+      <p>
+      <?php
+        if(count($relCont['Record']) > 1){
+          echo '<div id="moreRelCont" ><em>Additional Topics: </em>';
+            for($i=1;$i<count($relCont['Record']); $i++){
+              $params = array(
+                  'lookfor'=>$lookfor,
+                  'type'=>$_REQUEST['type'],
+                  'record'=>'y',
+                  'db'=>$relCont['Record'][$i]['DbId'],
+                  'an'=>$relCont['Record'][$i]['An']
+              );
+              $params = http_build_query($params);
+              echo '<a href="'.$path.'?'.$params.'" title="'.$relCont['Record'][$i]['Abstract'].'">';
+              if(isset($relCont['Record'][$i]['Title']) && !empty($relCont['Record'][$i]['Title'])){
+                echo $relCont['Record'][$i]['Title'];
+              }
+              else {
+                echo 'Title not available to Guests';
+              }
+              echo '</a>; ';
+            }
+          echo '</div>';
+        } // end more related content loop
+      ?>
+      </p>
+     </div>
+     <?php
+      if($results['relatedPublication'] != FALSE){
+        echo '<div id="showEMP"><a href="javascript:showEMP();">We also found an exact Publication Match, click here to see it!</a></div>';
+        $hideempplacard = 'style="display:none"';
+      }
+    ?>
+    <div style="clear:both"></div>
+  <?php } ?>
+  </div>
+
+<?php
+} // end reseach starters
+?>
+
+<!-- Start Exact Match Placard -->
+<?php
+if(!empty($results) && $results['relatedPublication'] != FALSE) {
+
+  echo '<div id="emp_placard" class="emp_placard yellowbg" '.$hideempplacard.'>';
+  echo '<div class="emp_label">'.$results['relatedPublication']['Label'].'</div>';
+  foreach($results['relatedPublication']['Record'] as $rec){
+    echo '<div class="emp_title"><a href="'.$rec['PLink'].'" target="_blank">'.$rec['Title'].'</a></div>';
+
+    if($rec['IsSearchable'] == 'y'){
+          echo '<div class="emp_sb">';
+          echo '<form action="'.$path.'" method="get">';
+          echo '<input type="hidden" name="search" value="y">';
+          echo '<input type="hidden" name="type" value="keyword">';
+          echo '<input type="hidden" name="pubtypeid" value="'.$rec['PublicationId'].'">';
+          echo '<input type="text" name="lookfor" size="40" placeholder="Search Inside this Journal">';
+          echo '<button type="submit">Go</button>';
+          echo '</form>';
+          echo '</div>';
+    }
+
+    if(count($rec['FullText']) > 0){
+      echo '<div class="emp_ft_target">';
+      echo '<div id="emp_show_ft_list"><a href="javascript:showEmpFtList();">[+]Show Full Text Access Options</a></div>';
+      echo '<div id="emp_hide_ft_list" style="display:none"><a href="javascript:hideEmpFtList();">[-]Hide Full Text Access Options</a></div>';
+      echo '<ul id="emp_ft_list" style="display:none">';
+      foreach($rec['FullText'] as $fullTxt){
+        echo '<li><a href="'.$fullTxt['URL'].'" target="_blank">'.$fullTxt['Name'].'</a></li>';
+      }
+      echo '</ul>';
+      echo '</div>';
+    }
+  }
+  echo '</div>';
+}
+?>
+<!-- End Exact Match Placard -->
 
   <!-- Display all results -->
           <div class="results table">
@@ -1178,7 +1513,7 @@ Begin displaying the user interface
                             <span>
                                <table>
                                     <tr>
-                                        <td style="vertical-align: top; width: 25px">By : </td><td>
+                                        <td style="width: 2em;padding-top:3px">By: </td><td>
                                             <table><tr><td>
                                     <?php foreach($result['Items']['Au'] as $Author){ ?>
                                         <?php echo $Author['Data']; ?>;
@@ -1216,7 +1551,7 @@ Begin displaying the user interface
 <!-- Abstract -->       <div class="abstract">
                             <table>
                                 <tr>
-                                    <td style="vertical-align: top;">Abstract: </td>
+                                    <td style="vertical-align:top;padding-top:3px">Abstract: </td>
                                     <td>
                                         <table>
                                              <?php foreach($result['Items']['Ab'] as $Abstract){ ?>
@@ -1237,7 +1572,7 @@ Begin displaying the user interface
 <!-- Subject  -->       <div class="subjects">
                             <table>
                                 <tr>
-                                    <td style="vertical-align: top;">Subjects:</td>
+                                    <td style="vertical-align:top;padding-top: 5px">Subjects:</td>
                                     <td>
                                         <table>
                                             <tr><td>
@@ -1470,14 +1805,20 @@ if (isset($result['error'])) {
          <?php } ?>
          </div>
              <div class="jacket">
-                <?php if(!empty($result['ImageInfo'])) { ?>
-                 <img width="150px" height="200px" src="<?php echo $result['ImageInfo']['medium']; ?>" />
-        <?php } ?>
+                <?php if(!empty($result['ImageInfo'])) {
+                  if(isset($result['ImageInfo']['medium']) && !empty($result['ImageInfo']['medium'])){
+                    echo '<img width="150px" height="200px" src="'.$result['ImageInfo']['medium'].'" />';
+                  }
+                  elseif(isset($result['ImageInfo']['thumb']) && !empty($result['ImageInfo']['thumb'])){
+                    echo '<img src="'.$result['ImageInfo']['thumb'].'" />';
+                  }
+                } ?>
              </div>
         </div>
 
          </div>
 </div>
  <?php } ?>
+
     </body>
 </html>
