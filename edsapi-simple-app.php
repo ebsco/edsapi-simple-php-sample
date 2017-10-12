@@ -67,17 +67,19 @@ class Functions
     const HTTP_BAD_REQUEST           = 400;
     const HTTP_NOT_FOUND             = 404;
     const HTTP_INTERNAL_SERVER_ERROR = 500;
+
    // This app uses the REST version of the API (HTTP Post for Authenticate, and HTTP GET for other API calls)
     private static $end_point = 'http://eds-api.ebscohost.com/edsapi/rest';
     private static $authentication_end_point = 'https://eds-api.ebscohost.com/Authservice/rest';
 
    //Enter your credentials here
-    private static $userID = "";
-    private static $password = "";
-    private static $interfaceID = "";
-    private static $profile = "";
-    private static $orgID = "";
-    private static $guest ="y";
+    private static $userID = "";          // required if not using IPAuth
+    private static $password = "";        // required if not using IPAuth
+    private static $interfaceID = "";     // optional
+    private static $profile = "";   	  // required, e.g. edsapi
+    private static $orgID = "";           // optional
+    private static $guest = "y";          // y / n => unless you have protected this script, use y
+    private static $useIPAuth = "y";      // y if Server IPs are registered in EBSCOAdmin / n if using userID && password (see above)
 
     //define, which related content feature you would like
     // rs = ResearchStarter; emp = Exact Match Plcard; comma separated value to request multiple (e.g. rs,emp)
@@ -85,6 +87,24 @@ class Functions
 
     //define, whether you would like EBSCO Discovery Service to suggest spelling corrections
     private static $autoSuggest = "y"; // options y / n
+
+    //define, whether you would like EBSCO Discovery Service to autocorrect spelling mistakes
+    //allow for override, when you want to search the original spelling
+
+    private static $autoCorrect = "y";
+
+    public function useAutoCorrect(){
+      if(isset($_GET["autocorrect"]) && strip_tags($_GET["autocorrect"]) == ("y" || "n")){
+        $autoCorrect = trim(strip_tags($_GET["autocorrect"]));
+      }
+      else{
+        $autoCorrect = self::$autoCorrect; // defaults to 'y'
+      }
+      return $autoCorrect;
+    }
+
+
+
 
     public function isGuest(){
         $guest = self::$guest;
@@ -145,28 +165,36 @@ class Functions
    // This function calls the UID Authenticate method using HTTP POST and fetches the auth token
     public function requestAuthenticationToken()
     {
-        $url = self::$authentication_end_point . '/UIDAuth';
-        $userID = self::$userID;
-        $password = self::$password;
-        $interfaceID = self::$interfaceID;
+        if(self::$useIPAuth != 'y'){
+          $url = self::$authentication_end_point . '/UIDAuth';
+          $userID = self::$userID;
+          $password = self::$password;
+          $interfaceID = self::$interfaceID;
 
-   // Add the body of the request. Important. UserId and Password are to the API profile
-   // UserID: customer’s EDS API user ID
-   // Password: customer’s EDS API password
-   // InterfaceID: optional string, use “api” (check with Michelle)
-        $params =<<<BODY
+          // Add the body of the request. Important. UserId and Password are to the API profile
+          // UserID: customer’s EDS API user ID
+          // Password: customer’s EDS API password
+          // InterfaceID: optional string, use “api” (check with Michelle)
+               $params =<<<BODY
 <UIDAuthRequestMessage xmlns="http://www.ebscohost.com/services/public/AuthService/Response/2012/06/01">
-    <UserId>$userID</UserId>
-    <Password>$password</Password>
-    <InterfaceId>$interfaceID</InterfaceId>
+  <UserId>$userID</UserId>
+  <Password>$password</Password>
+  <InterfaceId>$interfaceID</InterfaceId>
 </UIDAuthRequestMessage>
 BODY;
 
-        // Set the content type to 'application/xml'. Important, otherwise the server won't understand the request.
-        $headers = array(
-            'Content-Type: application/xml',
-            'Conent-Length: ' . strlen($params)
-        );
+               // Set the content type to 'application/xml'. Important, otherwise the server won't understand the request.
+               $headers = array(
+                   'Content-Type: application/xml',
+                   'Conent-Length: ' . strlen($params)
+               );
+
+        }
+        else {
+          $url = self::$authentication_end_point . '/ipauth';
+          $headers = array('Content-Type: application/xml');
+          $params = array();
+        }
 
         $response = $this->sendHTTPRequest($url, $params, $headers, 'POST');
         $response = $this->buildAuthenticationToken($response);
@@ -317,6 +345,7 @@ BODY;
             'highlight'      => 'y',
             'relatedcontent' => self::$relatedContent, // request related content
             'autosuggest'    => self::$autoSuggest, // request spelling corrections
+            'autocorrect'    => $this->useAutoCorrect(), // request autocorect feature
             'publicationid'  => $publicationid
         );
 
@@ -390,11 +419,16 @@ BODY;
         $hits = (integer) $response->SearchResult->Statistics->TotalHits;
 
         $records = array();
+        $relatedContent = array();
+        $relatedPublication = array();
+        $autoSuggest = array();
+        $autoCorrected = array();
         if ($hits > 0) {
             $records = $this->buildRecords($response);
             $relatedContent = $this->getRelatedContent($response);
             $relatedPublication = $this->getRelatedPublication($response);
             $autoSuggest = $this->getAutoSuggest($response);
+            $autoCorrected = $this->getAutoCorrect($response);
         }
 
         $results = array(
@@ -402,7 +436,8 @@ BODY;
             'records'     => $records,
             'relatedContent' => $relatedContent,
             'relatedPublication' => $relatedPublication,
-            'autoSuggest' => $autoSuggest
+            'autoSuggest' => $autoSuggest,
+            'autoCorrected' => $autoCorrected
         );
 
         return $results;
@@ -419,6 +454,19 @@ BODY;
         }
         return $suggestedTerms;
       }
+
+      //this function uses the Search XML response to get the autocorrected term
+
+        private function getAutoCorrect($response){
+          $suggestedTerms = Array();
+          $autoCorrectTest = $this->useAutoCorrect();
+          if($autoCorrectTest == 'y' && isset($response->SearchResult->AutoCorrectedTerms)){
+            foreach($response->SearchResult->AutoCorrectedTerms->AutoCorrectedTerm as $spellSuggestion){
+              $suggestedTerms[] = $spellSuggestion;
+            }
+          }
+          return $suggestedTerms;
+        }
 
     // This function uses the Search XML response to create an array of related content entries
         private function getRelatedContent($response){
@@ -739,7 +787,7 @@ echo '<meta http-equiv="refresh" content="0;url='.$pdfUrl.'">';
         curl_setopt($ch, CURLOPT_ENCODING, 'gzip,deflate'); // ensure compressed traffic is used
 
         // Set the query parameters and the url
-        if (empty($params)) {
+        if (empty($params) && self::$useIPAuth != 'y') {
             // Only Info request has empty parameters
             curl_setopt($ch, CURLOPT_URL, $url);
         } else {
@@ -764,7 +812,6 @@ echo '<meta http-equiv="refresh" content="0;url='.$pdfUrl.'">';
 
         // Send the request
         $response = curl_exec($ch);
-
         $response = $this->errorHandling($ch,$response,$log);
 
         return $response;
@@ -1258,15 +1305,47 @@ Begin displaying the user interface
  <!-- Display Result List -->
        <div id="results-container" class="resultsList-container">
 
-         <!-- if requested and present show Spelling Suggestion -->
+         <!-- if requested and present show Spelling Suggestion / AutoCorrect -->
          <?php
-         if(isset($results['autoSuggest']) && count($results['autoSuggest']) > 0) {
+         if(isset($results['autoSuggest']) && count($results['autoSuggest']) > 0 && isset($results['autoCorrected']) && count($results['autoCorrected']) == 0) {
            $as = 1;
            echo '<div id="autoSuggestedTerms" style="margin-left: 15px;margin-top: 10px">';
            echo 'Did you mean: ';
            foreach($results['autoSuggest'] as $suggestion) {
              $query = $_REQUEST;
              $query['lookfor'] = (string)$suggestion;
+             $newQuery = http_build_query($query);
+             echo '<a href="?'.$newQuery.'">'.$suggestion.'</a>';
+             if(count($results['autoSuggest'] > 1) && $as < count($results['autoSuggest'])){
+               echo '; ';
+             }
+             $as++;
+           }
+           echo '</div>';
+         }
+         elseif(isset($results['autoSuggest']) && count($results['autoSuggest']) > 0 && isset($results['autoCorrected']) && count($results['autoCorrected']) > 0) {
+           $ac = 1;
+           echo '<div id="autoCorrectedTerms" style="margin-left: 15px;margin-top: 10px">';
+           echo 'We automatically corrected your search to: ';
+           foreach($results['autoCorrected'] as $suggestion) {
+             $query = $_REQUEST;
+             $query['lookfor'] = (string)$suggestion;
+             $query['autocorrect'] = 'n';
+             $newQuery = http_build_query($query);
+             echo '<a href="?'.$newQuery.'">'.$suggestion.'</a>';
+             if(count($results['autoCorrected'] > 1) && $ac < count($results['autoCorrected'])){
+               echo '; ';
+             }
+             $ac++;
+           }
+           echo '</div>';
+           $as = 1;
+           echo '<div id="autoSuggestedTerms" style="margin-left: 15px;margin-top: 10px">';
+           echo 'Search for your original query instead: ';
+           foreach($results['autoSuggest'] as $suggestion) {
+             $query = $_REQUEST;
+             $query['lookfor'] = (string)$suggestion;
+             $query['autocorrect'] = 'n';
              $newQuery = http_build_query($query);
              echo '<a href="?'.$newQuery.'">'.$suggestion.'</a>';
              if(count($results['autoSuggest'] > 1) && $as < count($results['autoSuggest'])){
