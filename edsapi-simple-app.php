@@ -79,7 +79,8 @@ class Functions
     private static $profile = "";   	  // required, e.g. edsapi
     private static $orgID = "";           // optional
     private static $guest = "y";          // y / n => unless you have protected this script, use y
-    private static $useIPAuth = "y";      // y if Server IPs are registered in EBSCOAdmin / n if using userID && password (see above)
+    private static $useIPAuth = "n";      // y if Server IPs are registered in EBSCOAdmin / n if using userID && password (see above)
+    private static $imageQuickView = "y";            // y / n => requesting Image Quick View
 
     //define, which related content feature you would like
     // rs = ResearchStarter; emp = Exact Match Plcard; comma separated value to request multiple (e.g. rs,emp)
@@ -346,7 +347,8 @@ BODY;
             'relatedcontent' => self::$relatedContent, // request related content
             'autosuggest'    => self::$autoSuggest, // request spelling corrections
             'autocorrect'    => $this->useAutoCorrect(), // request autocorect feature
-            'publicationid'  => $publicationid
+            'publicationid'  => $publicationid,
+            'includeimagequickview' => self::$imageQuickView // request image quick view
         );
 
         $params = array_merge($params, $query);
@@ -616,30 +618,48 @@ BODY;
                     );
                 }
             }
+
+            if($record->ImageQuickViewItems->ImageQuickViewItem){
+              $result['iqv'] = array();
+              foreach($record->ImageQuickViewItems->ImageQuickViewItem as $iqv){
+                $dbcode = $iqv->DbId ? (string) $iqv->DbId : '';
+                $an = $iqv->An ? (string) $iqv->An : '';
+                $type = $iqv->Type ? (string) $iqv->Type : '';
+                $url = $iqv->Url ? (string) $iqv->Url : '';
+                $result['iqv'][] = array(
+                    'DbId' => $dbcode,
+                    'An' => $an,
+                    'Type' => $type,
+                    'url'  => $url
+                );
+              }
+            }
             $results[] = $result;
         }
         return $results;
     }
 
      // This function calls the Retrieve method with the AN and Database ID of the record that the user clicked on
-     public function requestRetrieve()
-    {
+     public function requestRetrieve(){
          try{
         $url = self::$end_point . '/Retrieve';
 
         $db = $_REQUEST['db'];
         $an = $_REQUEST['an'];
-        $highlight = $_REQUEST['lookfor'];
-        $highlight = str_replace(array(" ","&","-"),array(","),$highlight);
+        if(isset($_REQUEST['lookfor'])){
+          $highlight = $_REQUEST['lookfor'];
+          $highlight = str_replace(array(" ","&","-"),array(" "),$highlight);
+        }
+        else{
+          $highlight = '';
+        }
 
         $authenticationToken = $this ->getAuthToken();
         $sessionToken = $this ->getSessionToken($authenticationToken);
 
-        $params = array(
-            'an'        => $an,
-            'dbid'      => $db,
-            'highlightterms' => $highlight
-        );
+        $params['an'] = $an;
+        $params['dbid'] = $db;
+        $params['highlightterms'] = $highlight;
 
         $headers = array(
                 'x-authenticationToken: ' . $authenticationToken,
@@ -757,6 +777,7 @@ BODY;
                 );
             }
         }
+
         return $result;
 
     }
@@ -764,10 +785,12 @@ BODY;
      // This function request the PDF fulltext of the record
     public function requestPDF(){
 
-$record = $this->requestRetrieve();
-        //Call Retrieve Method to get the PDF Link from the record
-$pdfUrl = $record['pdflink'];
-echo '<meta http-equiv="refresh" content="0;url='.$pdfUrl.'">';
+      $record = $this->requestRetrieve();
+              //Call Retrieve Method to get the PDF Link from the record
+      $pdfUrl = $record['pdflink'];
+      header('Location: '.$pdfUrl.'', true, 307);
+      exit;
+
     }
 
     // This function is used to actually send the HTTP request and fetch the XML response from the API server
@@ -1108,7 +1131,7 @@ Begin displaying the user interface
 				vertical-align: top;
 			}
 			.icon {
-				background: url("http://imageserver.epnet.com/branding/demos/edsapi/sprites_32.png") no-repeat scroll left top transparent;
+				background: url("sprites_32.png") no-repeat scroll left top transparent;
 				display: inline-block;
 				height: 32px;
 				line-height: 32px;
@@ -1227,6 +1250,10 @@ Begin displaying the user interface
 .emp_title{
   font-weight: bold;
   font-size: 1.25em;
+}
+.iqv_thumbnail{
+  padding: 2px;
+  border: 1px solid #e5e5e5;
 }
 </style>
 <script>
@@ -1611,7 +1638,7 @@ if(!empty($results) && $results['relatedPublication'] != FALSE) {
                                 <span>
                                     <?php foreach($result['Items']['Src'] as $src){
                                          echo $src['Data'];
-                                     }?>
+                                     } ?>
                                 </span>
                         </div>
                        <?php } ?>
@@ -1620,7 +1647,7 @@ if(!empty($results) && $results['relatedPublication'] != FALSE) {
                                 <span>
                                     <?php foreach($result['Items']['SrcInfo'] as $src){
                                          echo $src['Data'];
-                                     }?>
+                                     } ?>
                                 </span>
                         </div>
                        <?php } ?>
@@ -1665,7 +1692,25 @@ if(!empty($results) && $results['relatedPublication'] != FALSE) {
                             </table>
                         </div>
                     <?php } ?>
-
+                    <?php if (!empty($result['iqv'])) { ?>
+<!-- ImageQuickView  --> <div class="iqv">
+                            <table>
+                                <tr>
+                                    <td style="vertical-align:top;padding-top: 5px">Images:</td>
+                                    <td>
+                                        <table>
+                                            <tr><td>
+                                             <?php foreach($result['iqv'] as $iqv){ ?>
+                                             <img src="<?php echo $iqv['url']; ?>" border="0" class="iqv_thumbnail" title="<?php echo $iqv['Type']; ?>"/>
+                                             <?php } ?>
+                                           </td></tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    <?php } ?>
+<!--end ImageQuickView -->
                     <div class="fulltext">
 <!-- HTML Fulltext  -->  <?php if($result['HTML']==1){?>
                          <?php if($api->isGuest()=='y'){ ?>
@@ -1792,7 +1837,7 @@ if (isset($result['error'])) {
                   </ul>
                       <?php } ?>
 
-                     <?php if(!empty($result['PDF'])||$result['HTML']==1){?>
+                     <?php if(!empty($result['PDF'])|| (isset($result['HTML']) && $result['HTML']==1)){?>
                      <ul class="table-cell-box">
                      <label>Full Text:</label><hr/>
 
@@ -1801,11 +1846,15 @@ if (isset($result['error'])) {
                           <?php if($api->isGuest()=='y'){ ?>
                           <a target="_blank" class="icon pdf fulltext" href="<?php echo $result['PLink']?>">Full Text</a>
                           <?php } ?>
-                          <?php if($api->isGuest()=='n'){ ?>
-                          <a target="_blank" class="icon pdf fulltext" href="PDF.php?an=<?php echo $result['An']?>&db=<?php echo $result['DbId']?>">
+                          <?php if($api->isGuest()=='n' && isset($result['pdflink']) && !empty($result['pdflink'])){ ?>
+                          <a target="_blank" class="icon pdf fulltext" href="<?php echo $result['pdflink']?>">
                         Full Text
                         </a>
-                          <?php } ?>
+                          <?php }
+                          else{
+                            ?>
+                              <a target="_blank" class="icon pdf fulltext" href="<?php echo $result['PLink']?>">Full Text</a>
+                            <?php } ?>
                       </li>
                       <?php } ?>
                       <?php if($result['HTML']==1){ ?>
@@ -1816,7 +1865,7 @@ if (isset($result['error'])) {
                           <?php } ?>
                            <?php if($api->isGuest()=='n'){ ?>
                       <li>
-                          <a target="_blank" class="icon html fulltext" href="#html">Full Text</a>
+                          <a class="icon html fulltext" href="#html">Full Text</a>
                       </li>
                          <?php } ?>
                       <?php } ?>
@@ -1897,7 +1946,9 @@ if (isset($result['error'])) {
 
          </div>
 </div>
- <?php } ?>
+<?php
+}
+?>
 
     </body>
 </html>
