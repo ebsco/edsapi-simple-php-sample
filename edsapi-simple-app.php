@@ -8,8 +8,8 @@ app to access your EDS implementation then we recommend you use the
 PHP Application Sample as your starting point.
 
 Author: Claus Wolf <cwolf@ebsco.com>
-Date: 2016-02-11
-Copyright 2014-2016 EBSCO Information Services
+Date: 2018-04-17
+Copyright 2014-2018 EBSCO Information Services
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -73,14 +73,14 @@ class Functions
     private static $authentication_end_point = 'https://eds-api.ebscohost.com/Authservice/rest';
 
    //Enter your credentials here
-    private static $userID = "";          // required if not using IPAuth
-    private static $password = "";        // required if not using IPAuth
-    private static $interfaceID = "";     // optional
-    private static $profile = "";   	  // required, e.g. edsapi
-    private static $orgID = "";           // optional
-    private static $guest = "y";          // y / n => unless you have protected this script, use y
-    private static $useIPAuth = "n";      // y if Server IPs are registered in EBSCOAdmin / n if using userID && password (see above)
-    private static $imageQuickView = "y";            // y / n => requesting Image Quick View
+    private static $userID = "";       // required if not using IPAuth
+    private static $password = "";  // required if not using IPAuth
+    private static $interfaceID = "";       // optional
+    private static $profile = "";   	// required, e.g. edsapi
+    private static $orgID = "";             // optional
+    private static $guest = "y";            // y | n => unless you have protected this script, use y
+    private static $useIPAuth = "n";        // y if Server IPs are registered in EBSCOAdmin / n if using userID && password (see above)
+    private static $imageQuickView = "y";   // y | n => requesting Image Quick View
 
     //define, which related content feature you would like
     // rs = ResearchStarter; emp = Exact Match Plcard; comma separated value to request multiple (e.g. rs,emp)
@@ -104,7 +104,21 @@ class Functions
       return $autoCorrect;
     }
 
+    // define whether to offer autocomplete, or not
+    // setting n here, will basicaly only remove jQuery, jQuery UI and the
+    // autocomplete javascript code, but authtoken requests will continue
+    // to request an autocomplete token
 
+    private static $autocomplete = "y";     // y | n => enable autocomplete
+
+    public function useAutoComplete(){
+      if(self::$autocomplete == 'y'){
+        return true;
+      }
+      else{
+        return false;
+      }
+    }
 
 
     public function isGuest(){
@@ -140,9 +154,12 @@ class Functions
         $lockFile = fopen("lock.txt","r");
         $tokenFile =fopen("token.txt","r");
         while(!feof($tokenFile)){
-            $authToken = rtrim(fgets($tokenFile),"\n");
-            $timeout = fgets($tokenFile)-600;
-            $timestamp = fgets($tokenFile);
+          $authToken = rtrim(fgets($tokenFile),"\n");
+          $timeout = rtrim(fgets($tokenFile),"\n")-600;
+          $timestamp = rtrim(fgets($tokenFile),"\n");
+          $autocompleteToken = rtrim(fgets($tokenFile),"\n");
+          $autocompleteUrl = rtrim(fgets($tokenFile),"\n");
+          $autocompleteCustId = rtrim(fgets($tokenFile),"\n");
         }
         fclose($tokenFile);
         if(time()-$timestamp>=$timeout){
@@ -152,7 +169,10 @@ class Functions
                 $result = $this->requestAuthenticationToken();
                 fwrite($tokenFile, $result['authenticationToken']."\n");
                 fwrite($tokenFile, $result['authenticationTimeout']."\n");
-                fwrite($tokenFile, $result['authenticationTimeStamp']);
+                fwrite($tokenFile, $result['authenticationTimeStamp']."\n");
+                fwrite($tokenFile, $result['autocompleteToken']."\n");
+                fwrite($tokenFile, $result['autocompleteUrl']."\n");
+                fwrite($tokenFile, $result['autocompleteCustId']);
                 fclose($tokenFile);
                 return $result['authenticationToken'];
             }else{
@@ -176,13 +196,18 @@ class Functions
           // UserID: customer’s EDS API user ID
           // Password: customer’s EDS API password
           // InterfaceID: optional string, use “api” (check with Michelle)
+          // Options -> Option = Autocomplete - request always for demo
                $params =<<<BODY
 <UIDAuthRequestMessage xmlns="http://www.ebscohost.com/services/public/AuthService/Response/2012/06/01">
   <UserId>$userID</UserId>
   <Password>$password</Password>
   <InterfaceId>$interfaceID</InterfaceId>
+  <Options>
+    <Option>autocomplete</Option>
+  </Options>
 </UIDAuthRequestMessage>
 BODY;
+
 
                // Set the content type to 'application/xml'. Important, otherwise the server won't understand the request.
                $headers = array(
@@ -193,8 +218,15 @@ BODY;
         }
         else {
           $url = self::$authentication_end_point . '/ipauth';
-          $headers = array('Content-Type: application/xml');
-          $params = array();
+          $params =<<<BODY
+<IPAuthRequestMessage xmlns="http://www.ebscohost.com/services/public/AuthService/Response/2012/06/01" xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+  <Options>
+    <Option>autocomplete</Option>
+  </Options>
+</IPAuthRequestMessage>
+BODY;
+
+          $headers = array('Content-Type: application/xml','Conent-Length: ' . strlen($params));
         }
 
         $response = $this->sendHTTPRequest($url, $params, $headers, 'POST');
@@ -207,14 +239,37 @@ BODY;
      {
         $token = (string) $response->AuthToken;
         $timeout = (integer) $response->AuthTimeout;
+        $autocompleteToken = (string) $response->Autocomplete->Token;
+        $autocompleteUrl = (string) $response->Autocomplete->Url;
+        $autocompleteCustId =  (string) $response->Autocomplete->CustId;
 
         $result = array(
             'authenticationToken'   => $token,
             'authenticationTimeout' => $timeout,
-            'authenticationTimeStamp'=> time()
+            'authenticationTimeStamp'=> time(),
+            'autocompleteToken' => $autocompleteToken,
+            'autocompleteUrl' => $autocompleteUrl,
+            'autocompleteCustId' => $autocompleteCustId
         );
         return $result;
      }
+
+     public function getAutoCompleteVariables(){
+           $lockFile = fopen("lock.txt","r");
+           $tokenFile =fopen("token.txt","r");
+           while(!feof($tokenFile)){
+               $authToken = rtrim(fgets($tokenFile),"\n");
+               $timeout = rtrim(fgets($tokenFile),"\n")-600;
+               $timestamp = rtrim(fgets($tokenFile),"\n");
+               $autocompleteToken = rtrim(fgets($tokenFile),"\n");
+               $autocompleteUrl = rtrim(fgets($tokenFile),"\n");
+               $autocompleteCustId = rtrim(fgets($tokenFile),"\n");
+           }
+           fclose($tokenFile);
+           return array($autocompleteToken, $autocompleteUrl, $autocompleteCustId);
+     }
+
+
      /**
      * Get session token for a profile
      * If session token is not available
@@ -1023,7 +1078,10 @@ if(file_exists("token.txt")){
             $result = $api->requestAuthenticationToken();
             fwrite($tokenFile, $result['authenticationToken']."\n");
             fwrite($tokenFile, $result['authenticationTimeout']."\n");
-            fwrite($tokenFile, $result['authenticationTimeStamp']);
+            fwrite($tokenFile, $result['authenticationTimeStamp']."\n");
+            fwrite($tokenFile, $result['autocompleteToken']."\n");
+            fwrite($tokenFile, $result['autocompleteUrl']."\n");
+            fwrite($tokenFile, $result['autocompleteCustId']);
             fclose($tokenFile);
         }
 
@@ -1051,6 +1109,15 @@ Begin displaying the user interface
  }else{ ?>
         <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <?php } ?>
+
+<?php
+if($api->useAutoComplete()){
+  echo '<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.2.4/jquery.min.js"></script>';
+  echo '<script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>';
+  echo '<link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css">';
+}
+?>
+
         <title>Simple PHP Demo</title>
 
 		<style type="text/css">
@@ -1946,6 +2013,54 @@ if (isset($result['error'])) {
 
          </div>
 </div>
+<?php
+}
+?>
+
+<?php
+if($api->useAutoComplete()){
+$autocompleteVariables = $api->getAutoCompleteVariables();
+
+  ?>
+  <script>
+
+    var autocompleteToken = '<?php echo rtrim($autocompleteVariables[0], "\n"); ?>';
+    var autocompleteurl = '<?php echo rtrim($autocompleteVariables[1], "\n");  ?>';
+    var autocompleteCustId = '<?php echo rtrim($autocompleteVariables[2], "\n");  ?>';
+
+
+    // Called when Autocomplete sample app is selected to display.
+    // Initialized jQuery UI Autocomplete on the "Field with Autocomplete".
+    function initializeAutocomplete() {
+      $('#lookfor').autocomplete({
+        source: function (request, response) {
+          var promise = $.ajax(autocompleteurl, {
+            data: {
+              token: autocompleteToken,
+              term: request.term,
+              idx: 'rawqueries',
+              filters: JSON.stringify([
+                {
+                  name: 'custid',
+                  values: [autocompleteCustId]
+                }
+              ])
+            }
+          });
+
+          promise.done(function (data) {
+            var terms = data.terms.map(function (wrapper) {
+              return wrapper.term;
+            });
+            response(terms);
+          });
+        }
+      });
+    }
+    $(document).ready(function() {
+      initializeAutocomplete();
+    });
+</script>
 <?php
 }
 ?>
