@@ -766,6 +766,77 @@ BODY;
         }
     }
 
+     public function requestExportRetrieve(){
+         try{
+        $url = self::$end_point . '/ExportFormat';
+
+        $db = $_REQUEST['db'];
+        $an = $_REQUEST['an'];
+        $format = $_REQUEST['format'];
+
+        $authenticationToken = $this ->getAuthToken();
+        $sessionToken = $this ->getSessionToken($authenticationToken);
+
+        $params['an'] = $an;
+        $params['dbid'] = $db;
+        $params['format'] = $format;
+
+        $headers = array(
+                'x-authenticationToken: ' . $authenticationToken,
+                'x-sessionToken: ' . $sessionToken
+         );
+
+        $response="";
+        try{
+        $response = $this->sendHTTPRequest($url, $params, $headers);
+        }catch(EBSCOException $e) {
+            try {
+                // Retry the request if there were authentication errors
+                $code = $e->getCode();
+                switch ($code) {
+                    case Functions::EDS_AUTH_TOKEN_INVALID:
+                        $_SESSION['authToken'] = $this->getAuthToken();
+                        $_SESSION['sessionToken'] = $this ->getSessionToken($_SESSION['authToken'],'y');
+
+                        return $this->requestExportRetrieve();
+
+                        break;
+                    case Functions::EDS_SESSION_TOKEN_INVALID:
+                        $_SESSION['sessionToken'] = $this ->getSessionToken($authenticationToken,'y');
+
+                        return $this->requestExportRetrieve();
+
+                        break;
+                    default:
+                        $result = array(
+                            'error' => $e->getMessage()
+                        );
+                        return $result;
+                        break;
+                }
+            }  catch(Exception $e) {
+                $result = array(
+                    'error' => $e->getMessage()
+                );
+                return $result;
+            }
+        }
+        if(isset($response->Data) && !empty($response->Data)){
+            $data['data'] = $response->Data;
+        }
+        else{
+            $data['error'] = 'failed to acquire RIS Data';
+        }
+        
+        return $data;
+    } catch(Exception $e) {
+            $result = array(
+                'error' => $e->getMessage()
+            );
+            return $result;
+        }
+    }
+
     // This function uses the Retrieve XML response to create an array of the record in the detailed record page
     private function buildRetrieve($response)
     {
@@ -846,6 +917,20 @@ BODY;
       header('Location: '.$pdfUrl.'', true, 307);
       exit;
 
+    }
+
+    // This function request the  Export of the record
+    public function requestExport(){
+        $data = $this->requestExportRetrieve();
+        if(!isset($data['error'])){
+            //ris header missing
+            header('Content-Type: application/x-research-info-systems');
+            echo $data['data'];
+        }
+        else{
+            echo $data['error'];
+        }
+        exit;
     }
 
     // This function is used to actually send the HTTP request and fetch the XML response from the API server
@@ -1096,17 +1181,17 @@ MAIN
 Begin displaying the user interface
 
 **/
-?>
-
-<!-- UIs -->
-<html>
-    <head>
-        <!-- PDF -->
-<?php
 // Clicks on PDF links need to be handled seperately
  if(isset($_REQUEST['pdf'])){
-  $api -> requestPDF();
- }else{ ?>
+    $api -> requestPDF();
+ }
+ elseif(isset($_REQUEST['export'])){
+    $api->requestExport();
+ }
+ else{ ?>
+ <!-- UIs -->
+    <html>
+        <head>
         <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <?php } ?>
 
@@ -1647,6 +1732,16 @@ if(!empty($results) && $results['relatedPublication'] != FALSE) {
                     <span class="pt-icon <?php echo $pubTypeClass?>"></span>
                     <?php } ?>
                     <div><?php echo $result['pubType'] ?></div>
+                    <!-- RIS Feature -->
+                    <?php
+                    // if not guest show export link
+                    if($api->isGuest()=='n'){
+                        echo '<div style="margin-top: 2em">';
+                        echo '<a href="?export=y&format=ris&an='.$result['An'].'&db='.$result['DbId'].'" target="_blank">RIS Export</a>';
+                        echo '</div>';
+                    }
+                    ?>
+                    <!-- End RIS Feature -->
                 </div>
                 <?php } ?>
                 <div class="info table-cell">
