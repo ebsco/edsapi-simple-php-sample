@@ -924,7 +924,9 @@ BODY;
         $data = $this->requestExportRetrieve();
         if(!isset($data['error'])){
             //ris header missing
+            $filename = $_GET['an'].'_'.$_GET['db'].'.ris';
             header('Content-Type: application/x-research-info-systems');
+            header('Content-Disposition: inline; filename="'.$filename.'"');
             echo $data['data'];
         }
         else{
@@ -1996,6 +1998,16 @@ if (isset($result['error'])) {
                         View in EDS
                         </a>
                       </li>
+                    <!-- RIS Feature -->
+                    <?php
+                    // if not guest show export link
+                    if($api->isGuest()=='n'){
+                        echo '<li">';
+                        echo '<a href="?export=y&format=ris&an='.$result['An'].'&db='.$result['DbId'].'" target="_blank">RIS Export</a>';
+                        echo '</li>';
+                    }
+                    ?>
+                    <!-- End RIS Feature -->
                   </ul>
                       <?php } ?>
 
