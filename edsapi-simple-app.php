@@ -923,7 +923,7 @@ BODY;
     public function requestExport(){
         $data = $this->requestExportRetrieve();
         if(!isset($data['error'])){
-            //ris header missing
+            //RIS Header & File Name set
             $filename = $_GET['an'].'_'.$_GET['db'].'.ris';
             header('Content-Type: application/x-research-info-systems');
             header('Content-Disposition: inline; filename="'.$filename.'"');
