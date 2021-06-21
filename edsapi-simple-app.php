@@ -8,8 +8,8 @@ app to access your EDS implementation then we recommend you use the
 PHP Application Sample as your starting point.
 
 Author: Claus Wolf <cwolf@ebsco.com>
-Date: 2018-04-17
-Copyright 2014-2018 EBSCO Information Services
+Date: 2021-05-24
+Copyright 2014-2021 EBSCO Information Services
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ class Functions
     const HTTP_INTERNAL_SERVER_ERROR = 500;
 
    // This app uses the REST version of the API (HTTP Post for Authenticate, and HTTP GET for other API calls)
-    private static $end_point = 'http://eds-api.ebscohost.com/edsapi/rest';
+    private static $end_point = 'https://eds-api.ebscohost.com/edsapi/rest';
     private static $authentication_end_point = 'https://eds-api.ebscohost.com/Authservice/rest';
 
    //Enter your credentials here
